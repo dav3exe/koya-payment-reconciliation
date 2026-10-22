@@ -5,14 +5,38 @@
 
 const fs = require("fs");
 
+// Amounts are numbers or strings, some with thousands separators ("4,804.15").
+function parseAmount(raw) {
+  if (typeof raw === "number") return raw;
+  return Number(String(raw).replace(/,/g, "").trim());
+}
+
+// Only the latest attempt (by ts) for each txn_id counts. Ties: later line wins.
+const latest = new Map();
+
+const lines = fs.readFileSync("payments.jsonl", "utf8").split("\n");
+for (const line of lines) {
+  if (line.trim().length === 0) continue;
+  let event;
+  try {
+    event = JSON.parse(line);
+  } catch {
+    continue; // unreadable line
+  }
+  if (event === null || typeof event !== "object" || !event.txn_id) continue;
+
+  const time = Date.parse(event.ts);
+  const prev = latest.get(event.txn_id);
+  if (!prev || time >= prev.time) latest.set(event.txn_id, { time, event });
+}
+
 let total = 0;
 let count = 0;
-
-const lines = fs.readFileSync("payments.jsonl", "utf8").split("\n").filter((l) => l.length > 0);
-for (const line of lines) {
-  const event = JSON.parse(line);
+for (const { event } of latest.values()) {
   if (event.status === "success") {
-    total += Number(event.amount);
+    const amount = parseAmount(event.amount);
+    if (Number.isNaN(amount)) throw new Error(`Bad amount: ${JSON.stringify(event)}`);
+    total += amount;
     count += 1;
   }
 }
